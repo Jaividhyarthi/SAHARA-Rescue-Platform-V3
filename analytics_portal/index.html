@@ -28,6 +28,84 @@ html { scroll-behavior: smooth; }
   scroll-margin-top: 30px;
 }
 
+
+/* SAHARA_MULTIPAGE_V2 */
+.aside button.navitem {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  background: transparent;
+  color: #b9d3d1;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 12px 13px;
+  margin: 5px 0;
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.aside button.navitem:hover {
+  background: #1c4149;
+  color: #fff;
+}
+.aside button.navitem.active {
+  background: #22504e;
+  color: #ffffff;
+  border-color: #376965;
+}
+.aside button.navitem:focus-visible {
+  outline: 2px solid #7ee0c5;
+  outline-offset: 2px;
+}
+.analytics-page[hidden] {
+  display: none !important;
+}
+.page-heading {
+  margin: 8px 0 25px;
+}
+.page-heading h2 {
+  font-family: Georgia, serif;
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 600;
+  letter-spacing: -.03em;
+  margin: 5px 0;
+}
+.page-heading p {
+  color: #71888b;
+  font-size: 13px;
+  max-width: 650px;
+}
+.analytics-page > .panel,
+.analytics-page > .sectiongrid {
+  margin-top: 18px;
+}
+@media(max-width:760px) {
+  .aside {
+    height: auto;
+    position: relative;
+  }
+  .aside button.navitem {
+    display: inline-flex;
+    width: auto;
+    margin: 8px 4px 2px 0;
+    padding: 10px;
+    font-size: 12px;
+  }
+  .aside-label {
+    display: block;
+    margin: 16px 0 5px;
+  }
+  .sidebottom {
+    display: none;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -57,17 +135,184 @@ function draw(){if(!live)return;const d=live,st=d.missions.status||{},timeline=d
 async function refresh(){try{const response=await fetch('/api/metrics',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(!data||!data.missions||!data.users||!Array.isArray(data.timeline))throw Error('Unexpected API response');live=data;draw();$('connection').className='live';$('connection').innerHTML='<span class="dot"></span> LIVE DATA';$('update').textContent='Last refreshed: '+new Date().toLocaleTimeString()+' · source: SAHARA production';$('error').className='error';}catch(e){$('connection').className='live off';$('connection').innerHTML='<span class="dot"></span> OFFLINE';$('error').className='error show';$('error').textContent='Could not fetch production analytics ('+e.message+'). Existing figures, if shown, may be stale. Check the Render services and shared analytics key.';$('update').textContent='Live refresh failed · '+new Date().toLocaleTimeString();}}
 $('refresh').addEventListener('click',refresh);$('d7').onclick=()=>{days=7;$('d7').className='sel';$('d30').className='';draw()};$('d30').onclick=()=>{days=30;$('d30').className='sel';$('d7').className='';draw()};refresh();timer=setInterval(refresh,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
 
-document.querySelectorAll('.navitem[data-target]').forEach(button => {
-  button.addEventListener('click', () => {
-    const target = document.getElementById(button.dataset.target);
-    if (!target) return;
-    document.querySelectorAll('.navitem').forEach(item =>
-      item.classList.remove('active')
-    );
-    button.classList.add('active');
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+
+
+/* SAHARA_MULTIPAGE_V2 */
+(function () {
+  const main = document.querySelector('.main');
+  const hero = document.getElementById('overview');
+  const cards = document.getElementById('adoption');
+  const operationsGrid = document.getElementById('operations');
+
+  function findPanel(title) {
+    return [...document.querySelectorAll('section.panel')]
+      .find(panel =>
+        panel.querySelector('h3')?.textContent.trim() === title
+      );
+  }
+
+  const categories = findPanel('What people request');
+  const roles = findPanel('Community composition');
+  const comms = findPanel('Communication events');
+  const priorities = findPanel('Priority profile');
+  const recent = findPanel('Latest mission activity');
+  const fineprint = document.querySelector('.fineprint');
+
+  if (!main || !hero || !cards || !operationsGrid ||
+      !categories || !roles || !comms ||
+      !priorities || !recent) {
+    console.error('Analytics multi-page setup: missing section');
+    return;
+  }
+
+  const definitions = {
+    overview: {
+      title: 'Live overview',
+      description: 'A real-time picture of the SAHARA rescue network.'
+    },
+    operations: {
+      title: 'Rescue operations',
+      description: 'Mission activity, request categories, priorities and case progress.'
+    },
+    adoption: {
+      title: 'Community adoption',
+      description: 'Registered participants, volunteer engagement and network growth.'
+    },
+    communication: {
+      title: 'Nexconn communication',
+      description: 'Real communication events recorded through Nexconn SDK instrumentation.'
+    }
+  };
+
+  const pages = {};
+
+  function makePage(key) {
+    const page = document.createElement('div');
+    page.className = 'analytics-page';
+    page.id = 'analytics-page-' + key;
+    page.hidden = true;
+
+    page.innerHTML =
+      '<div class="page-heading">' +
+      '<div class="eyebrow">SAHARA / ' + key.toUpperCase() + '</div>' +
+      '<h2>' + definitions[key].title + '</h2>' +
+      '<p>' + definitions[key].description + '</p>' +
+      '</div>';
+
+    main.insertBefore(page, hero);
+    pages[key] = page;
+    return page;
+  }
+
+  Object.keys(definitions).forEach(makePage);
+
+  pages.overview.append(hero, cards);
+  if (fineprint) pages.overview.append(fineprint);
+
+  pages.operations.append(operationsGrid);
+
+  function panelGrid(...panels) {
+    const grid = document.createElement('div');
+    grid.className = 'sectiongrid';
+    panels.forEach(panel => grid.appendChild(panel));
+    return grid;
+  }
+
+  pages.operations.append(panelGrid(categories, priorities));
+  pages.operations.append(recent);
+  pages.adoption.append(roles);
+  pages.communication.append(comms);
+
+  // Real database-backed adoption KPIs.
+  const adoptionKPIs = document.createElement('div');
+  adoptionKPIs.className = 'cards';
+  adoptionKPIs.innerHTML = [
+    ['adopt-residents', 'RESIDENTS', 'Registered help seekers'],
+    ['adopt-volunteers', 'VOLUNTEERS', 'Registered volunteers'],
+    ['adopt-coordinators', 'COORDINATORS', 'Administrative accounts'],
+    ['adopt-available', 'AVAILABLE NOW', 'Recent volunteer presence']
+  ].map(([id, label, description]) =>
+    '<div class="metric">' +
+    '<div class="head"><span>' + label + '</span></div>' +
+    '<strong id="' + id + '">—</strong>' +
+    '<small>' + description + '</small></div>'
+  ).join('');
+
+  pages.adoption.insertBefore(
+    adoptionKPIs,
+    pages.adoption.querySelector('.panel')
+  );
+
+  // Remove empty containers left by the original one-page layout.
+  main.querySelectorAll('.sectiongrid').forEach(grid => {
+    if (!grid.children.length) grid.remove();
   });
-});
+  main.querySelectorAll('.sectiontag').forEach(tag => tag.remove());
+
+  // Update adoption metrics from the same live API response.
+  const originalDraw = draw;
+  draw = function () {
+    originalDraw();
+
+    if (!live) return;
+
+    const values = {
+      'adopt-residents': live.users.residents,
+      'adopt-volunteers': live.users.volunteers,
+      'adopt-coordinators': live.users.coordinators,
+      'adopt-available': live.users.active_volunteers_15m
+    };
+
+    Object.entries(values).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = fmt(value);
+    });
+  };
+
+  function navigate() {
+    const requested = location.hash.replace(/^#\/?/, '');
+    const key = Object.hasOwn(definitions, requested)
+      ? requested
+      : 'overview';
+
+    Object.entries(pages).forEach(([name, page]) => {
+      page.hidden = name !== key;
+    });
+
+    document.querySelectorAll('.navitem[data-target]')
+      .forEach(button => {
+        const active = button.dataset.target === key;
+        button.classList.toggle('active', active);
+
+        if (active) {
+          button.setAttribute('aria-current', 'page');
+        } else {
+          button.removeAttribute('aria-current');
+        }
+      });
+
+    const title = document.querySelector('.breadcrumb b');
+    if (title) title.textContent = definitions[key].title.toUpperCase();
+
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  document.querySelectorAll('.navitem[data-target]')
+    .forEach(button => {
+      button.addEventListener('click', () => {
+        const target = button.dataset.target;
+        if (location.hash === '#/' + target) {
+          navigate();
+        } else {
+          location.hash = '/' + target;
+        }
+      });
+    });
+
+  window.addEventListener('hashchange', navigate);
+  navigate();
+})();
 
 </script>
 </body>
