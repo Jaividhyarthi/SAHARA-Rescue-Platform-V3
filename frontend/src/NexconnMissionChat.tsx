@@ -1,3 +1,4 @@
+import { trackSaharaEvent } from './analyticsTelemetry';
 import { NCCallEngine } from '@nexconn/call';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -177,6 +178,7 @@ export default function NexconnMissionChat({
         mine: true
       }]);
 
+      trackSaharaEvent(missionId, 'message_sent', String((result as unknown as {messageId?:string}).messageId || crypto.randomUUID()));
       setDraft('');
       setStatus('Message delivered to Nexconn');
     } catch (error) {

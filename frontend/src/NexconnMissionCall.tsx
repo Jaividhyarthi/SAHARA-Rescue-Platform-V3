@@ -1,3 +1,4 @@
+import { trackSaharaEvent } from './analyticsTelemetry';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   NCCallEngine,
@@ -121,6 +122,7 @@ export default function NexconnMissionCall({
             setIncoming(null);
             setCalling(false);
             setConnected(true);
+            trackSaharaEvent(missionId, 'call_connected', id);
             setStatus('Nexconn call connected');
           },
 
@@ -201,6 +203,7 @@ export default function NexconnMissionCall({
         setCallId(result.callId);
       }
 
+      trackSaharaEvent(missionId, video ? 'video_call_started' : 'audio_call_started', String(result.callId || crypto.randomUUID()));
       setStatus(video ? 'Video call ringing...' : 'Audio call ringing...');
     } catch (error) {
       setCalling(false);

@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5173,
     allowedHosts: ['.trycloudflare.com'],
     proxy: {
-      '^/(auth|missions|presence|offers|command|push|health|nexconn)(/|$)': {
+      '^/(auth|missions|presence|offers|command|push|health|nexconn|analytics)(/|$)': {
         target: api,
         changeOrigin: true
       },

@@ -317,6 +317,10 @@ def nexconn_session(u:User=Depends(current)):
         "user_id":u.id
     }
 
+# SAHARA operational analytics: registered BEFORE static catch-all.
+from analytics_api import install_analytics_routes
+install_analytics_routes(app, Base, SessionLocal, User, Mission, Presence, Offer, Chat, current, dbs)
+
 # Serve the production React application.
 # Keep this after all API and WebSocket routes.
 from pathlib import Path as _Path
