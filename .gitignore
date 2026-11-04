@@ -1,0 +1,43 @@
+.env
+.env.local
+*.db
+__pycache__/
+.venv/
+node_modules/
+dist/
+*.pyc
+
+# Secret configuration
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local databases and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+backups/
+backup_*/
+**/backups/
+**/backup_*/
+
+# Build and development artifacts
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.vite/

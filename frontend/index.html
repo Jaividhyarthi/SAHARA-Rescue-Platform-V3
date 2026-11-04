@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0" />
+
+  <meta name="theme-color" content="#F4EEE8" />
+  <meta name="description"
+        content="SAHARA Rescue Intelligence - Connecting People. Coordinating Help. Saving Lives." />
+
+  <title>SAHARA — Rescue Intelligence</title>
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon"
+        href="/icons/sahara-brand-192-v5.png"
+        type="image/png" />
+
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    #sahara-startup {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #F4EEE8;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity .45s ease;
+    }
+
+    #sahara-startup.closing {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .sahara-startup-image {
+      display: block;
+      height: 100%;
+      width: 100%;
+      object-fit: contain;
+      object-position: center;
+    }
+
+    /* Desktop: blend the artwork into the surrounding canvas. */
+    @media (min-width: 768px) {
+      #sahara-startup {
+        background: #F4EEE8;
+      }
+
+      .sahara-startup-image {
+        width: auto;
+        max-width: 100%;
+        height: 100%;
+        object-fit: contain;
+        -webkit-mask-image:
+          linear-gradient(to right,
+            transparent, black 7%, black 93%, transparent);
+        mask-image:
+          linear-gradient(to right,
+            transparent, black 7%, black 93%, transparent);
+      }
+    }
+
+    /* Mobile: the artwork becomes a full-screen splash. */
+    @media (max-width: 767px) {
+      .sahara-startup-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
+
+    #sahara-startup-error {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      background: #F4EEE8;
+      padding: 24px;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #17354A;
+      font: 16px system-ui, sans-serif;
+    }
+
+    #sahara-startup-error button {
+      margin-top: 16px;
+      padding: 12px 22px;
+      border: 0;
+      border-radius: 10px;
+      color: white;
+      background: #164B83;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #sahara-startup {
+        transition: none;
+      }
+    }
+  </style>
+
+<style id="sahara-responsive-v7">
+#sahara-startup {
+  background: #F4EEE8 !important;
+}
+
+#sahara-startup .sahara-startup-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+#sahara-startup .sahara-live-progress {
+  position: absolute;
+  bottom: 23%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(245px, 53vw);
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(16,47,67,.17);
+  overflow: hidden;
+}
+
+#sahara-startup .sahara-live-progress span {
+  display: block;
+  height: 100%;
+  width: 35%;
+  border-radius: inherit;
+  background: #174D85;
+  animation: sahara-slide-v7 1.25s ease-in-out infinite;
+}
+
+@keyframes sahara-slide-v7 {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(390%); }
+}
+
+@media (min-width:768px) {
+  #sahara-startup .sahara-startup-image {
+    content: url('/sahara-splash-desktop-v7.jpg');
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    object-fit: cover;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  #sahara-startup .sahara-live-progress {
+    bottom: 16%;
+  }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  #sahara-startup .sahara-live-progress span {
+    animation: none;
+    width: 100%;
+  }
+}
+</style>
+
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <div id="sahara-startup" role="status"
+       aria-label="Opening SAHARA Rescue Intelligence">
+    <img
+      src="/sahara-splash-mobile-v7.png"
+      class="sahara-startup-image"
+      alt="SAHARA Rescue Intelligence"
+    />
+    <div class="sahara-live-progress"
+         aria-hidden="true">
+      <span></span>
+    </div>
+  </div>
+
+  <div id="sahara-startup-error" role="alert">
+    <div>
+      <h2>SAHARA could not finish loading</h2>
+      <p>Please check the application server and refresh.</p>
+      <button onclick="location.reload()">Retry</button>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    const splash = document.getElementById('sahara-startup');
+    const root = document.getElementById('root');
+    const errorBox = document.getElementById('sahara-startup-error');
+
+    let completed = false;
+    let observer;
+
+    function showApplication() {
+      if (completed) return;
+      completed = true;
+
+      if (observer) observer.disconnect();
+
+      splash.classList.add('closing');
+
+      setTimeout(function () {
+        splash.remove();
+      }, 500);
+    }
+
+    function checkReact() {
+      if (root && root.children.length > 0) {
+        // Give the branded splash a brief, intentional appearance.
+        setTimeout(showApplication, 650);
+      }
+    }
+
+    observer = new MutationObserver(checkReact);
+
+    observer.observe(root, {
+      childList: true,
+      subtree: false
+    });
+
+    checkReact();
+
+    // Never leave the artwork spinning indefinitely.
+    setTimeout(function () {
+      if (!completed) {
+        splash.remove();
+        errorBox.style.display = 'flex';
+        if (observer) observer.disconnect();
+        console.error(
+          '[SAHARA] React did not render within 6 seconds'
+        );
+      }
+    }, 6000);
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js')
+          .catch(console.error);
+      });
+    }
+  })();
+  </script>
+
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

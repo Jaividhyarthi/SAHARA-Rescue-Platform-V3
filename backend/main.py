@@ -1,0 +1,265 @@
+"""SAHARA v2 independent prototype API. NOT an emergency dispatch system."""
+import os,uuid,math,json,asyncio,logging
+from datetime import datetime,timezone,timedelta
+from contextlib import asynccontextmanager
+from typing import Optional
+from dotenv import load_dotenv
+from fastapi import FastAPI,Depends,HTTPException,Header,WebSocket,WebSocketDisconnect,Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel,EmailStr,Field
+from sqlalchemy import create_engine,Column,String,Float,DateTime,ForeignKey,Text,select
+from sqlalchemy.orm import declarative_base,sessionmaker,Session
+from pwdlib import PasswordHash
+import jwt
+load_dotenv()
+URL=os.getenv('DATABASE_URL','sqlite:///./sahara.db');SECRET=os.getenv('JWT_SECRET','dev-only-insecure-change-me')
+if URL.startswith('postgresql://'):URL=URL.replace('postgresql://','postgresql+psycopg://',1)
+engine=create_engine(URL,connect_args={'check_same_thread':False} if URL.startswith('sqlite') else {},pool_pre_ping=True)
+SessionLocal=sessionmaker(bind=engine);Base=declarative_base();hashing=PasswordHash.recommended()
+def now():return datetime.now(timezone.utc)
+def uid():return str(uuid.uuid4())
+class User(Base):
+ __tablename__='users'
+ id=Column(String,primary_key=True,default=uid);name=Column(String(100),nullable=False);email=Column(String(255),unique=True,index=True);password=Column(String(255));role=Column(String(30));skills=Column(String(300),default='');points=Column(Float,default=0)
+class Mission(Base):
+ __tablename__='missions'
+ id=Column(String,primary_key=True,default=uid);resident_id=Column(String,ForeignKey('users.id'));volunteer_id=Column(String,ForeignKey('users.id'),nullable=True);category=Column(String(80));description=Column(Text);priority=Column(String(30));status=Column(String(30),default='pending');latitude=Column(Float,nullable=True);longitude=Column(Float,nullable=True);created_at=Column(DateTime(timezone=True),default=now)
+class Presence(Base):
+ __tablename__='presence'
+ user_id=Column(String,ForeignKey('users.id'),primary_key=True);latitude=Column(Float);longitude=Column(Float);available=Column(String,default='no');updated_at=Column(DateTime(timezone=True),default=now)
+class Offer(Base):
+ __tablename__='offers'
+ id=Column(String,primary_key=True,default=uid);mission_id=Column(String,ForeignKey('missions.id'));volunteer_id=Column(String,ForeignKey('users.id'));status=Column(String,default='pending')
+class Position(Base):
+ __tablename__='positions'
+ mission_id=Column(String,ForeignKey('missions.id'),primary_key=True);volunteer_id=Column(String,ForeignKey('users.id'));latitude=Column(Float);longitude=Column(Float);accuracy=Column(Float);updated_at=Column(DateTime(timezone=True),default=now)
+class PushSubscription(Base):
+ __tablename__="push_subscriptions"
+ endpoint=Column(String(1000),primary_key=True);user_id=Column(String,ForeignKey("users.id"),index=True);subscription=Column(Text,nullable=False)
+class Chat(Base):
+ __tablename__='chat'
+ id=Column(String,primary_key=True,default=uid);mission_id=Column(String,ForeignKey('missions.id'));sender_id=Column(String,ForeignKey('users.id'));body=Column(Text);created_at=Column(DateTime(timezone=True),default=now)
+@asynccontextmanager
+async def lifespan(app):Base.metadata.create_all(engine);yield
+app=FastAPI(title='SAHARA Rescue Intelligence API',version='2.0.0',lifespan=lifespan)
+app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173').split(','),allow_methods=['*'],allow_headers=['*'])
+def dbs():
+ with SessionLocal() as db:yield db
+def current(authorization:Optional[str]=Header(None),db:Session=Depends(dbs)):
+ if not authorization or not authorization.startswith('Bearer '):raise HTTPException(401,'Sign in required')
+ try:id=jwt.decode(authorization[7:],SECRET,algorithms=['HS256'])['sub']
+ except Exception:raise HTTPException(401,'Session expired')
+ u=db.get(User,id)
+ if not u:raise HTTPException(401,'Account not found')
+ return u
+def identity(u):return {'id':u.id,'name':u.name,'email':u.email,'role':u.role,'skills':u.skills or '', 'points':u.points or 0}
+def mission(m):return {k:getattr(m,k) for k in ('id','resident_id','volunteer_id','category','description','priority','status','latitude','longitude','created_at')}
+def permitted(m,u):return u.role=='coordinator' or u.id in (m.resident_id,m.volunteer_id)
+def hav(a,b,c,d):
+ r=math.pi/180;x=math.sin((c-a)*r/2)**2+math.cos(a*r)*math.cos(c*r)*math.sin((d-b)*r/2)**2
+ return 12742*math.asin(min(1,math.sqrt(x)))
+class Register(BaseModel):
+ name:str=Field(min_length=2,max_length=100);email:EmailStr;password:str=Field(min_length=8,max_length=128);role:str='resident'
+class Login(BaseModel):email:EmailStr;password:str
+class NewMission(BaseModel):
+ category:str=Field(min_length=2,max_length=80);description:str=Field(min_length=2,max_length=2000);priority:str='high';latitude:Optional[float]=Field(None,ge=-90,le=90);longitude:Optional[float]=Field(None,ge=-180,le=180)
+class Location(BaseModel):latitude:float=Field(ge=-90,le=90);longitude:float=Field(ge=-180,le=180);accuracy:Optional[float]=Field(None,ge=0)
+class Availability(Location):available:bool=True
+class TextIn(BaseModel):body:str=Field(min_length=1,max_length=2000)
+class StatusIn(BaseModel):status:str
+@app.get('/health')
+def health():return {'status':'ok','mode':'prototype'}
+@app.post('/auth/register')
+def register(p:Register,db:Session=Depends(dbs)):
+ if p.role not in ('resident','volunteer'):raise HTTPException(403,'Coordinator accounts require administrative provisioning')
+ if db.scalar(select(User).where(User.email==p.email.lower())):raise HTTPException(409,'Email exists')
+ u=User(id=uid(),name=p.name,email=p.email.lower(),password=hashing.hash(p.password),role=p.role);db.add(u);db.commit();return {'token':jwt.encode({'sub':u.id,'exp':now()+timedelta(days=2)},SECRET,algorithm='HS256'),'user':identity(u)}
+@app.post('/auth/login')
+def login(p:Login,db:Session=Depends(dbs)):
+ u=db.scalar(select(User).where(User.email==p.email.lower()))
+ if not u or not hashing.verify(p.password,u.password):raise HTTPException(401,'Invalid credentials')
+ return {'token':jwt.encode({'sub':u.id,'exp':now()+timedelta(days=2)},SECRET,algorithm='HS256'),'user':identity(u)}
+@app.get('/auth/me')
+def me(u:User=Depends(current)):return identity(u)
+@app.get('/missions')
+def missions(u:User=Depends(current),db:Session=Depends(dbs)):
+ q=select(Mission).order_by(Mission.created_at.desc())
+ if u.role=='resident':q=q.where(Mission.resident_id==u.id)
+ if u.role=='volunteer':q=q.where(Mission.volunteer_id==u.id)
+ return [mission(m) for m in db.scalars(q).all()]
+@app.post('/missions')
+def create(p:NewMission,u:User=Depends(current),db:Session=Depends(dbs)):
+ if u.role!='resident':raise HTTPException(403,'Resident only')
+ if p.priority not in ('standard','high','critical'):raise HTTPException(400,'Invalid priority')
+ m=Mission(id=uid(),resident_id=u.id,**p.model_dump());db.add(m);db.flush()
+ if m.latitude is not None and m.longitude is not None:
+  cutoff=now()-timedelta(minutes=15)
+  people=db.scalars(select(Presence).where(Presence.available=='yes')).all()
+  nearby=sorted((x for x in people if x.updated_at and (x.updated_at.replace(tzinfo=timezone.utc) if x.updated_at.tzinfo is None else x.updated_at)>cutoff and hav(m.latitude,m.longitude,x.latitude,x.longitude)<=15),key=lambda x:hav(m.latitude,m.longitude,x.latitude,x.longitude))[:5]
+  for x in nearby:db.add(Offer(id=uid(),mission_id=m.id,volunteer_id=x.user_id))
+ db.commit();
+ if m.latitude is not None:notify(db,[x.volunteer_id for x in db.scalars(select(Offer).where(Offer.mission_id==m.id)).all()],"Nearby SAHARA request","A resident is requesting assistance")
+ return mission(m)
+@app.put('/presence')
+def presence(p:Availability,u:User=Depends(current),db:Session=Depends(dbs)):
+ if u.role!='volunteer':raise HTTPException(403,'Volunteer only')
+ x=db.get(Presence,u.id)
+ if not x:x=Presence(user_id=u.id);db.add(x)
+ x.latitude=p.latitude;x.longitude=p.longitude;x.available='yes' if p.available else 'no';x.updated_at=now();db.commit();return {'ok':True}
+@app.get('/offers')
+def offers(u:User=Depends(current),db:Session=Depends(dbs)):
+ if u.role!='volunteer':raise HTTPException(403,'Volunteer only')
+ rows=db.scalars(select(Offer).where(Offer.volunteer_id==u.id,Offer.status=='pending')).all()
+ return [{'id':x.id,'mission':mission(db.get(Mission,x.mission_id))} for x in rows if db.get(Mission,x.mission_id).status=='pending']
+@app.post('/offers/{id}/accept')
+def accept(id:str,u:User=Depends(current),db:Session=Depends(dbs)):
+ x=db.get(Offer,id)
+ if not x or x.volunteer_id!=u.id:raise HTTPException(404,'Offer not found')
+ m=db.get(Mission,x.mission_id)
+ if x.status!='pending' or m.status!='pending':raise HTTPException(409,'Offer already claimed')
+ m.volunteer_id=u.id;m.status='assigned';x.status='accepted'
+ for other in db.scalars(select(Offer).where(Offer.mission_id==m.id,Offer.id!=id)).all():other.status='expired'
+ db.commit();notify(db,[m.resident_id],"Volunteer accepted","A volunteer has accepted your mission");return mission(m)
+@app.patch('/missions/{id}/status')
+def status(id:str,p:StatusIn,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or not permitted(m,u):raise HTTPException(404,'Mission unavailable')
+ transitions={'pending':['cancelled'],'assigned':['in_progress','cancelled'],'in_progress':['reported_complete','cancelled'],'reported_complete':['confirmed','disputed'],'disputed':['in_progress','confirmed']}
+ if p.status not in transitions.get(m.status,[]):raise HTTPException(409,'Invalid transition')
+ if p.status in ('in_progress','reported_complete') and u.id!=m.volunteer_id and u.role!='coordinator':raise HTTPException(403,'Volunteer only')
+ if p.status in ('confirmed','disputed','cancelled') and u.id!=m.resident_id and u.role!='coordinator':raise HTTPException(403,'Resident only')
+ m.status=p.status
+ if p.status in ('confirmed','cancelled','reported_complete'):
+  x=db.get(Position,m.id)
+  if x:db.delete(x)
+ if p.status=='confirmed' and m.volunteer_id:
+  v=db.get(User,m.volunteer_id);v.points=(v.points or 0)+100
+ db.commit();return mission(m)
+@app.put('/missions/{id}/tracking')
+def track(id:str,p:Location,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or m.volunteer_id!=u.id:raise HTTPException(403,'Assigned volunteer only')
+ if m.status not in ('assigned','in_progress'):raise HTTPException(409,'Mission not active')
+ x=db.get(Position,id)
+ if not x:x=Position(mission_id=id,volunteer_id=u.id);db.add(x)
+ x.latitude=p.latitude;x.longitude=p.longitude;x.accuracy=p.accuracy;x.updated_at=now();db.commit();return {'ok':True}
+@app.delete('/missions/{id}/tracking')
+def stop(id:str,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or not permitted(m,u):raise HTTPException(403,'Forbidden')
+ x=db.get(Position,id)
+ if x:db.delete(x);db.commit()
+ return {'ok':True}
+@app.get('/missions/{id}/tracking')
+def tracking(id:str,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or not permitted(m,u):raise HTTPException(403,'Forbidden')
+ x=db.get(Position,id);fresh=x and m.status in ('assigned','in_progress') and now()-(x.updated_at.replace(tzinfo=timezone.utc) if x.updated_at.tzinfo is None else x.updated_at)<timedelta(minutes=2)
+ return {'resident':{'latitude':m.latitude,'longitude':m.longitude} if m.latitude is not None else None,'volunteer':{'latitude':x.latitude,'longitude':x.longitude,'accuracy':x.accuracy,'updated_at':x.updated_at} if fresh else None,'status':m.status}
+@app.get('/missions/{id}/messages')
+def messages(id:str,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or not permitted(m,u):raise HTTPException(403,'Forbidden')
+ return [{'id':x.id,'body':x.body,'sender_id':x.sender_id,'created_at':x.created_at} for x in db.scalars(select(Chat).where(Chat.mission_id==id).order_by(Chat.created_at)).all()]
+@app.post('/missions/{id}/messages')
+def message(id:str,p:TextIn,u:User=Depends(current),db:Session=Depends(dbs)):
+ m=db.get(Mission,id)
+ if not m or not permitted(m,u):raise HTTPException(403,'Forbidden')
+ x=Chat(id=uid(),mission_id=id,sender_id=u.id,body=p.body);db.add(x);db.commit();notify(db,[z for z in [m.resident_id,m.volunteer_id] if z and z!=u.id],'New mission message',p.body[:100]);return {'ok':True}
+@app.get('/command')
+def command(u:User=Depends(current),db:Session=Depends(dbs)):
+ if u.role!='coordinator':raise HTTPException(403,'Coordinator only')
+ rows=db.scalars(select(Mission).order_by(Mission.created_at.desc())).all()
+ return {'missions':[mission(x) for x in rows],'volunteers':[identity(v) for v in db.scalars(select(User).where(User.role=='volunteer')).all()]}
+
+
+# WebSocket signaling: mission-scoped, JWT authenticated, no media recording.
+rooms:dict[str,dict[str,WebSocket]]={}
+@app.websocket('/ws/missions/{mission_id}')
+async def mission_socket(ws:WebSocket,mission_id:str):
+ token=ws.query_params.get('token','')
+ try:
+  ident=jwt.decode(token,SECRET,algorithms=['HS256'])['sub']
+  with SessionLocal() as db:
+   u=db.get(User,ident);m=db.get(Mission,mission_id)
+   if not u or not m or not permitted(m,u) or m.status in ('cancelled','confirmed'):
+    await ws.close(code=1008);return
+ except Exception:
+  await ws.close(code=1008);return
+ await ws.accept()
+ members=rooms.setdefault(mission_id,{})
+ old=members.get(ident)
+ if old:
+  try:await old.close(code=1000)
+  except Exception:pass
+ members[ident]=ws
+ async def publish_presence():
+  for participant_id, participant in list(members.items()):
+   try:await participant.send_json({'type':'presence','data':{'peers':len(members)-1}})
+   except Exception:pass
+ await publish_presence()
+ try:
+  while True:
+   packet=await ws.receive_json()
+   if packet.get('type') not in ('offer','answer','ice','hangup','ping','decline','busy'):continue
+   if len(json.dumps(packet))>30000:continue
+   for peer_id,peer in list(members.items()):
+    if peer_id!=ident:
+     try:await peer.send_json({'type':packet['type'],'data':packet.get('data'),'sender':ident})
+     except Exception:pass
+ except (WebSocketDisconnect,RuntimeError):pass
+ finally:
+  if members.get(ident) is ws:members.pop(ident,None)
+  if members:
+   for participant_id,participant in list(members.items()):
+    try:await participant.send_json({'type':'presence','data':{'peers':len(members)-1}})
+    except Exception:pass
+  else:rooms.pop(mission_id,None)
+
+# Browser push subscriptions. Requires HTTPS and VAPID configuration for delivery.
+class PushInput(BaseModel):
+ endpoint:str=Field(max_length=1000)
+ keys:dict[str,str]
+@app.post('/push/subscribe')
+def push_subscribe(p:PushInput,u:User=Depends(current),db:Session=Depends(dbs)):
+ if not p.endpoint.startswith('https://') or not p.keys.get('auth') or not p.keys.get('p256dh'):
+  raise HTTPException(400,'Invalid browser push subscription')
+ x=db.get(PushSubscription,p.endpoint)
+ if x and x.user_id!=u.id:raise HTTPException(403,'Subscription belongs to another user')
+ if not x:x=PushSubscription(endpoint=p.endpoint,user_id=u.id,subscription='');db.add(x)
+ x.subscription=json.dumps({'endpoint':p.endpoint,'keys':p.keys});db.commit();return {'ok':True}
+@app.delete('/push/subscribe')
+def push_unsubscribe(p:PushInput,u:User=Depends(current),db:Session=Depends(dbs)):
+ x=db.get(PushSubscription,p.endpoint)
+ if x and x.user_id==u.id:db.delete(x);db.commit()
+ return {'ok':True}
+@app.get('/push/config')
+def push_config():return {'public_key':os.getenv('VAPID_PUBLIC_KEY',''),'enabled':bool(os.getenv('VAPID_PUBLIC_KEY') and os.getenv('VAPID_PRIVATE_KEY'))}
+def notify(db,user_ids,title,body,url='/'):
+ if not os.getenv('VAPID_PRIVATE_KEY'):return
+ try:
+  from pywebpush import webpush
+  for sub in db.scalars(select(PushSubscription).where(PushSubscription.user_id.in_(list(set(user_ids))))).all():
+   try:
+    webpush(subscription_info=json.loads(sub.subscription),data=json.dumps({'title':title,'body':body,'url':url}),vapid_private_key=os.environ['VAPID_PRIVATE_KEY'],vapid_claims={'sub':os.getenv('VAPID_SUBJECT','mailto:admin@example.com')},ttl=120)
+   except Exception as exc:logging.warning('Push delivery failed: %s',type(exc).__name__)
+ except Exception as exc:logging.warning('Push integration unavailable: %s',type(exc).__name__)
+
+
+# Serve the production React application.
+# Keep this after all API and WebSocket routes.
+from pathlib import Path as _Path
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+_frontend_dist = (
+    _Path(__file__).resolve().parent.parent
+    / "frontend"
+    / "dist"
+)
+
+if _frontend_dist.is_dir():
+    app.mount(
+        "/",
+        _StaticFiles(directory=str(_frontend_dist), html=True),
+        name="sahara"
+    )

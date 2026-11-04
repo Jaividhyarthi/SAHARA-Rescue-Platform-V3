@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "SAHARA Rescue Intelligence",
+  "short_name": "SAHARA",
+  "description": "Community SOS and volunteer coordination",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0B211C",
+  "theme_color": "#0B211C",
+  "icons": [
+    {
+      "src": "/icons/sahara-brand-192-v5.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sahara-brand-512-v5.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sahara-brand-512-v5.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
