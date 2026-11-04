@@ -246,6 +246,77 @@ def notify(db,user_ids,title,body,url='/'):
  except Exception as exc:logging.warning('Push integration unavailable: %s',type(exc).__name__)
 
 
+
+# SAHARA_NEXCONN_AUTH_V1
+# Issue user tokens using server-side Nexconn credentials.
+import hashlib as _nc_hashlib
+import secrets as _nc_secrets
+import time as _nc_time
+import urllib.request as _nc_request
+import urllib.error as _nc_error
+from urllib.parse import urlparse as _nc_urlparse
+
+@app.get("/nexconn/session")
+def nexconn_session(u:User=Depends(current)):
+    app_key=os.getenv("NEXCONN_APP_KEY","").strip()
+    secret=os.getenv("NEXCONN_APP_SECRET","").strip()
+    base=os.getenv("NEXCONN_API_BASE","").strip().rstrip("/")
+
+    if not all((app_key,secret,base)):
+        raise HTTPException(503,"Nexconn credentials not configured")
+
+    parsed=_nc_urlparse(base)
+    if parsed.scheme!="https" or not parsed.hostname:
+        raise HTTPException(503,"Invalid Nexconn API hostname")
+    if parsed.path not in ("","/") or parsed.query or parsed.fragment:
+        raise HTTPException(503,"Nexconn API base must be a host URL")
+
+    nonce=_nc_secrets.token_hex(8)
+    timestamp=str(int(_nc_time.time()*1000))
+    signature=_nc_hashlib.sha1(
+        (secret+nonce+timestamp).encode("utf-8")
+    ).hexdigest()
+
+    payload=json.dumps({
+        "userId":u.id,
+        "name":u.name,
+        "avatarUrl":""
+    }).encode("utf-8")
+
+    req=_nc_request.Request(
+        base+"/v4/auth/access-token/issue",
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type":"application/json",
+            "App-Key":app_key,
+            "Nonce":nonce,
+            "Timestamp":timestamp,
+            "Signature":signature
+        }
+    )
+
+    try:
+        with _nc_request.urlopen(req,timeout=12) as response:
+            result=json.loads(response.read())
+    except (_nc_error.URLError,TimeoutError,ValueError):
+        logging.exception("Nexconn token request failed")
+        raise HTTPException(502,"Nexconn token service unavailable")
+
+    if result.get("code")!=0:
+        logging.warning("Nexconn token issue returned code %s",result.get("code"))
+        raise HTTPException(502,"Nexconn rejected token request")
+
+    token=(result.get("result") or {}).get("accessToken")
+    if not token:
+        raise HTTPException(502,"Nexconn returned no access token")
+
+    return {
+        "app_key":app_key,
+        "token":token,
+        "user_id":u.id
+    }
+
 # Serve the production React application.
 # Keep this after all API and WebSocket routes.
 from pathlib import Path as _Path
